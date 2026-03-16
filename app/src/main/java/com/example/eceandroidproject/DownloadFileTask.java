@@ -1,15 +1,23 @@
+/**
+ * Convertisseur De Monnaies — Projet Android ECE
+ * ------------------------------------------------
+ * Auteur  : Mohamed GALY
+ * Cours   : Développement Mobile Android — ECE Paris
+ * Licence : MIT
+ *
+ * Tâche asynchrone chargée de récupérer les taux de change
+ * depuis le flux XML de la Banque Centrale Européenne (BCE).
+ * En cas d'absence de connexion, les données sont lues depuis
+ * la base de données SQLite locale.
+ */
 package com.example.eceandroidproject;
 
-import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ContentValues;
-import android.content.Context;
 import android.content.DialogInterface;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
-import android.net.ConnectivityManager;
-import android.net.NetworkInfo;
 import android.os.AsyncTask;
 import android.util.Log;
 import android.widget.ArrayAdapter;
@@ -20,14 +28,15 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
+
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
@@ -36,135 +45,171 @@ import static com.example.eceandroidproject.DB_Sqlite.RateManager.RateEntry.COLU
 import static com.example.eceandroidproject.DB_Sqlite.RateManager.RateEntry.COLUMN_RATE;
 import static com.example.eceandroidproject.DB_Sqlite.RateManager.RateEntry.TABLE_NAME;
 
-
 public class DownloadFileTask extends AsyncTask {
 
-    Boolean NetworkCHK; //Boolean for the internet connection ..
-    private HashMap<String, Double> CBdataXML = null; // define a HashMap for the Central bank XML data information
-    private int versionDB = 1; //version DB
     private static final String TAG = "MyApplication";
-    FireBaseManager FireBRateData = new FireBaseManager();
+
+    // Contient les paires (code devise → taux par rapport à l'EUR)
+    private HashMap<String, Double> CBdataXML = null;
+    // Indique si le téléchargement s'est effectué avec succès
+    private boolean downloadSuccess = true;
+
+    // Gestionnaire Firebase pour la synchronisation des taux
+    private FireBaseManager fireBRateData = new FireBaseManager();
+    // Référence à l'activité appelante (pour accéder aux vues)
     public Activity activity = null;
+
+    // Indicateur de mode en ligne affiché dans l'interface
+    private TextView statusTextView;
+    // Sélecteur de devise source
+    private Spinner s1;
+    // Sélecteur de devise cible
+    private Spinner s2;
+
+    // Gestionnaire de la base de données SQLite
+    private DB_Sqlite db_sqlite;
+    private SQLiteDatabase db;
+
     public DownloadFileTask(Activity mainActivity) {
         this.activity = mainActivity;
+        // Récupération des vues depuis le layout de l'activité
         s1 = (Spinner) activity.findViewById(R.id.spinner1);
         s2 = (Spinner) activity.findViewById(R.id.spinner2);
-        ST = activity.findViewById(R.id.textView1);
+        statusTextView = activity.findViewById(R.id.textView1);
     }
-    @SuppressLint("WrongThread")
-    TextView ST;
-    Spinner s1;
-    Spinner s2;
-    Boolean DownloadTest = true; //Boolean in order to check the dowload done correctly
-    // data base
-    private DB_Sqlite db_sqlite;
-    SQLiteDatabase db;
 
+    /**
+     * Exécuté en arrière-plan : télécharge et parse le flux XML de la BCE.
+     * L'EUR est ajouté manuellement (taux de base = 1,0).
+     */
+    @Override
     protected Object doInBackground(Object[] objects) {
-
         CBdataXML = new HashMap<>();
-        CBdataXML.put("EUR", 1.0); // put data in the Hashmap if the data base was empty and the dowload not correct ..
+        // L'EUR sert de devise de référence avec un taux de 1,0
+        CBdataXML.put("EUR", 1.0);
+
         try {
             URL url = new URL("https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml");
             URLConnection connection = url.openConnection();
-            connection.setConnectTimeout(1000);
+            connection.setConnectTimeout(5000);
             connection.connect();
+
+            // Construction du parseur XML
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            DocumentBuilder  docBuildder = factory.newDocumentBuilder();
-            Document document = docBuildder.parse((url.openStream()));
-            NodeList NodelistDoc = document.getElementsByTagName("Cube");
-            for (int i = 0; i < NodelistDoc.getLength(); i++) {
-                Element ele = (Element) NodelistDoc.item(i);
-                if (!ele.getAttribute("currency").equals("")) {
-                    CBdataXML.put(ele.getAttribute("currency"), Double.parseDouble(ele.getAttribute("rate")));
-                    Log.w(TAG, "1 EUR = " + ele.getAttribute("rate") + " " + ele.getAttribute("currency")); // Show the rates compared with the euro in the Log
+            DocumentBuilder docBuilder = factory.newDocumentBuilder();
+            Document document = docBuilder.parse(url.openStream());
+
+            // Parcours des nœuds <Cube> contenant les taux de change
+            NodeList nodeListDoc = document.getElementsByTagName("Cube");
+            for (int i = 0; i < nodeListDoc.getLength(); i++) {
+                Element ele = (Element) nodeListDoc.item(i);
+                String currency = ele.getAttribute("currency");
+                String rate = ele.getAttribute("rate");
+                if (!currency.isEmpty()) {
+                    CBdataXML.put(currency, Double.parseDouble(rate));
+                    Log.w(TAG, "1 EUR = " + rate + " " + currency);
                 }
             }
         } catch (ParserConfigurationException | IOException | SAXException e) {
-            Log.e("except1", e.getMessage());
-            DownloadTest = false; //Send false if any problem in the download file
+            Log.e(TAG, "Erreur lors du téléchargement : " + e.getMessage());
+            downloadSuccess = false;
         }
         return null;
     }
+
+    /**
+     * Exécuté sur le thread principal après doInBackground.
+     * Met à jour l'interface et persiste les données selon le résultat du téléchargement.
+     */
     @Override
     protected void onPostExecute(Object o) {
         super.onPostExecute(o);
         db_sqlite = new DB_Sqlite(activity.getApplicationContext());
-        if (DownloadTest) {
-            ST.setText("Mode En Ligne");
-            ST.setTextColor(activity.getResources().getColor(R.color.colorAccent));
-            // IF everything are alright then we add the information into the data base
-            // put the info into the Spinners
-            Log.d("hashmap", CBdataXML.toString());
+
+        if (downloadSuccess) {
+            // ---- Mode en ligne ----
+            statusTextView.setText("Mode En Ligne");
+            statusTextView.setTextColor(activity.getResources().getColor(R.color.colorAccent));
+            Log.d(TAG, "Données récupérées : " + CBdataXML.toString());
+
+            // Alimentation des deux sélecteurs de devises
             List<String> keys = new ArrayList<>(CBdataXML.keySet());
-            ArrayAdapter<String> adapter = new ArrayAdapter<String>(this.activity, android.R.layout.simple_spinner_item, keys);
+            ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                    this.activity, android.R.layout.simple_spinner_item, keys);
             adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
             s1.setAdapter(adapter);
             s2.setAdapter(adapter);
-            // Write in the data base SQL
+
+            // Écriture des taux dans la base de données SQLite locale
             db = db_sqlite.getWritableDatabase();
-            Iterator dataIterator = CBdataXML.entrySet().iterator();
-            while (dataIterator.hasNext()) {
-                Map.Entry mapElement = (Map.Entry) dataIterator.next();
+            for (Map.Entry<String, Double> entry : CBdataXML.entrySet()) {
                 ContentValues values = new ContentValues();
-                values.put(COLUMN_NAME, (String) mapElement.getKey());
-                values.put(COLUMN_RATE, (Double) mapElement.getValue());
-                db.insert(TABLE_NAME, null, values);
+                values.put(COLUMN_NAME, entry.getKey());
+                values.put(COLUMN_RATE, entry.getValue());
                 long newRowId = db.insert(TABLE_NAME, null, values);
-                Log.d("DataBase", Long.toString(newRowId));
-                // FireBase
-                FireBRateData.getInstance();
-                int id = 0;
-                Iterator dataIterator2 = CBdataXML.entrySet().iterator();
-                while (dataIterator2.hasNext()) {
-                    Map.Entry mapElement2 = (Map.Entry) dataIterator2.next();
-                    FireBRateData.writeNewRate(Integer.toString(id), (String) mapElement2.getKey(), (Double) mapElement2.getValue());
-                    id++;
-                }
+                Log.d("DataBase", "Ligne insérée : " + newRowId);
             }
-            } else {
-                ST.setText("Mode Hors Ligne");
-                ST.setTextColor(activity.getResources().getColor(R.color.design_default_color_error));
-                // if there no Internet connection then show alert to the user
-                AlertDialog.Builder builder1 = new AlertDialog.Builder(this.activity);
-                builder1.setMessage("Connexion impossible, Merci de vérifier votre connexion internet");
-                builder1.setCancelable(true);
-                builder1.setPositiveButton(
-                        "Ok",
-                        new DialogInterface.OnClickListener() {
-                            public void onClick(DialogInterface dialog, int id) {
-                                dialog.cancel();
-                            }
-                        });
-                AlertDialog alert11 = builder1.create();
-                alert11.show();
-                Log.e("Network", "no network reachable");
 
-                db = db_sqlite.getReadableDatabase(); // Read our data base ..
-                Cursor cursor = db.rawQuery("SELECT * FROM " +TABLE_NAME, null);
-                Log.d("cursor", cursor.toString());
-                if(cursor.moveToFirst()) {
-                    do {
-                        CBdataXML.put(cursor.getString(cursor.getColumnIndex(COLUMN_NAME)),
-                                cursor.getDouble(cursor.getColumnIndex(COLUMN_RATE)));
-
-                    } while (cursor.moveToNext());
-                }
-                db.close();
-                // Put the data into the spinners
-                Log.d("hashmap", CBdataXML.toString());
-                List<String> keys = new ArrayList<>(CBdataXML.keySet());
-                ArrayAdapter<String> adapter = new ArrayAdapter<String>(this.activity, android.R.layout.simple_spinner_item, keys);
-                adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-                s1.setAdapter(adapter);
-                s2.setAdapter(adapter);
+            // Synchronisation des taux sur Firebase Realtime Database
+            fireBRateData.getInstance();
+            int id = 0;
+            for (Map.Entry<String, Double> entry : CBdataXML.entrySet()) {
+                fireBRateData.writeNewRate(Integer.toString(id), entry.getKey(), entry.getValue());
+                id++;
             }
-        }
 
-        public HashMap<String, Double> getCBdataXML() {
-            return this.CBdataXML; // CBdataXML Getter
+        } else {
+            // ---- Mode hors ligne ----
+            statusTextView.setText("Mode Hors Ligne");
+            statusTextView.setTextColor(
+                    activity.getResources().getColor(R.color.design_default_color_error));
+            Log.e("Réseau", "Aucune connexion disponible");
+
+            // Affichage d'une alerte pour informer l'utilisateur
+            new AlertDialog.Builder(this.activity)
+                    .setMessage("Connexion impossible. Merci de vérifier votre connexion internet.")
+                    .setCancelable(true)
+                    .setPositiveButton("Ok", new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface dialog, int id) {
+                            dialog.cancel();
+                        }
+                    })
+                    .create()
+                    .show();
+
+            // Lecture des taux depuis la base de données SQLite locale
+            db = db_sqlite.getReadableDatabase();
+            Cursor cursor = db.rawQuery("SELECT * FROM " + TABLE_NAME, null);
+            Log.d("cursor", cursor.toString());
+
+            if (cursor.moveToFirst()) {
+                do {
+                    CBdataXML.put(
+                            cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_NAME)),
+                            cursor.getDouble(cursor.getColumnIndexOrThrow(COLUMN_RATE)));
+                } while (cursor.moveToNext());
+            }
+            cursor.close();
+            db.close();
+
+            Log.d(TAG, "Données locales chargées : " + CBdataXML.toString());
+
+            // Alimentation des sélecteurs avec les données locales
+            List<String> keys = new ArrayList<>(CBdataXML.keySet());
+            ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                    this.activity, android.R.layout.simple_spinner_item, keys);
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+            s1.setAdapter(adapter);
+            s2.setAdapter(adapter);
         }
     }
 
-
-
+    /**
+     * Retourne la table des taux de change téléchargés ou chargés localement.
+     *
+     * @return HashMap associant chaque code de devise à son taux par rapport à l'EUR.
+     */
+    public HashMap<String, Double> getCBdataXML() {
+        return this.CBdataXML;
+    }
+}

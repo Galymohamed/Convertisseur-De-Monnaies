@@ -57,3 +57,19 @@ google-services.json
 
 # Debug and profiling
 *.hprof
+
+# Fichiers de configuration locaux et sensibles
+local.properties
+keystore.properties
+*.keystore
+*.jks
+
+# Fichiers de credentials / mots de passe (ne jamais versionner)
+AndroidProjectGmail.txt
+google-services.json
+firebase.json
+serviceAccountKey.json
+
+# Répertoires de cache et temporaires
+.cache/
+tmp/

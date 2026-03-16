@@ -1,3 +1,13 @@
+/**
+ * Convertisseur De Monnaies — Projet Android ECE
+ * ------------------------------------------------
+ * Auteur  : Mohamed GALY
+ * Cours   : Développement Mobile Android — ECE Paris
+ * Licence : MIT
+ *
+ * Activité secondaire affichant la liste complète des taux de change
+ * reçus depuis MainActivity via un Intent.
+ */
 package com.example.eceandroidproject;
 
 import android.content.Intent;
@@ -17,33 +27,34 @@ public class ListActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.listview);
 
+        // Bouton de retour vers l'activité principale
         final TextView exitTextView = (TextView) findViewById(R.id.button3);
         exitTextView.setOnClickListener(exitView);
 
-        // Get the Intent that started this activity and extract the string
+        // Récupération de la liste des taux transmise par MainActivity
         Intent intent = getIntent();
-        HashMap<String, Double> message;
-        message = (HashMap<String, Double>)intent.getSerializableExtra("CurrencyList");
-        //Log.i("MyApp", message.toString());
+        HashMap<String, Double> taux =
+                (HashMap<String, Double>) intent.getSerializableExtra("CurrencyList");
 
-        // Capture the layout's TextView and set the string as its text
+        // Construction du tableau d'affichage : "CODE = valeur"
         ListView viewmylist = findViewById(R.id.liste);
+        String[] data = new String[taux.size()];
         int j = 0;
-        String[] data = new String[message.size()];
-
-        for (String i : message.keySet()) {
-            data[j] = i + " = " + message.get(i);
+        for (String devise : taux.keySet()) {
+            data[j] = devise + " = " + taux.get(devise);
             j++;
         }
 
-        ArrayAdapter adapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, data);
+        // Adaptateur liant le tableau à la ListView
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                this, android.R.layout.simple_list_item_1, data);
         viewmylist.setAdapter(adapter);
-
     }
+
+    // Ferme cette activité et retourne à MainActivity
     private View.OnClickListener exitView = new View.OnClickListener() {
         public void onClick(View v) {
             finish();
         }
     };
-
 }
